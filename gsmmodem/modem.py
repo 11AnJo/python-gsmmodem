@@ -110,7 +110,7 @@ class StatusReport(Sms):
     DELIVERED = 0 # SMS delivery status: delivery successful
     FAILED = 68 # SMS delivery status: delivery failed
 
-    def __init__(self, gsmModem, status, reference, number, timeSent, timeFinalized, deliveryStatus, smsc=None):
+    def __init__(self, gsmModem, status, reference, number, timeSent, timeFinalized, deliveryStatus, smsc=None, index=None):
         super(StatusReport, self).__init__(number, None, smsc)
         self._gsmModem = weakref.proxy(gsmModem)
         self.status = status
@@ -118,6 +118,7 @@ class StatusReport(Sms):
         self.timeSent = timeSent
         self.timeFinalized = timeFinalized
         self.deliveryStatus = deliveryStatus
+        self.index = index
 
 
 class GsmModem(SerialComms):
@@ -1156,7 +1157,7 @@ class GsmModem(SerialComms):
                         if smsDict['type'] == 'SMS-DELIVER':
                             sms = ReceivedSms(self, int(msgStat), smsDict['number'], smsDict['time'], smsDict['text'], smsDict['smsc'], smsDict.get('udh', []), msgIndex)
                         elif smsDict['type'] == 'SMS-STATUS-REPORT':
-                            sms = StatusReport(self, int(msgStat), smsDict['reference'], smsDict['number'], smsDict['time'], smsDict['discharge'], smsDict['status'])
+                            sms = StatusReport(self, int(msgStat), smsDict['reference'], smsDict['number'], smsDict['time'], smsDict['discharge'], smsDict['status'], msgIndex)
                         else:
                             raise CommandError('Invalid PDU type for readStoredSms(): {0}'.format(smsDict['type']))
                         messages.append(sms)
