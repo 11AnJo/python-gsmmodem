@@ -110,7 +110,7 @@ class StatusReport(Sms):
     DELIVERED = 0 # SMS delivery status: delivery successful
     FAILED = 68 # SMS delivery status: delivery failed
 
-    def __init__(self, gsmModem, status, reference, number, timeSent, timeFinalized, deliveryStatus, smsc=None, index=None):
+    def __init__(self, gsmModem, status, reference, number, timeSent, timeFinalized, deliveryStatus, smsc=None):
         super(StatusReport, self).__init__(number, None, smsc)
         self._gsmModem = weakref.proxy(gsmModem)
         self.status = status
@@ -118,7 +118,6 @@ class StatusReport(Sms):
         self.timeSent = timeSent
         self.timeFinalized = timeFinalized
         self.deliveryStatus = deliveryStatus
-        self.index = index
 
 
 class GsmModem(SerialComms):
@@ -143,7 +142,7 @@ class GsmModem(SerialComms):
     # Used for parsing SMS message reads (PDU mode)
     CMGR_REGEX_PDU = None
     # Used for parsing USSD event notifications
-    CUSD_REGEX = re.compile('\+CUSD:\s*(\d),\s*"(.*?)",\s*(\d+)', re.DOTALL)
+    CUSD_REGEX = re.compile(r'\+CUSD:\s*(\d)(?:,\s*"(.*?)")?(?:,\s*(\d+))?', re.DOTALL)
     # Used for parsing SMS status reports
     CDSI_REGEX = re.compile('\+CDSI:\s*"([^"]+)",(\d+)$')
     CDS_REGEX  = re.compile('\+CDS:\s*([0-9]+)"$')
@@ -1157,7 +1156,7 @@ class GsmModem(SerialComms):
                         if smsDict['type'] == 'SMS-DELIVER':
                             sms = ReceivedSms(self, int(msgStat), smsDict['number'], smsDict['time'], smsDict['text'], smsDict['smsc'], smsDict.get('udh', []), msgIndex)
                         elif smsDict['type'] == 'SMS-STATUS-REPORT':
-                            sms = StatusReport(self, int(msgStat), smsDict['reference'], smsDict['number'], smsDict['time'], smsDict['discharge'], smsDict['status'], msgIndex)
+                            sms = StatusReport(self, int(msgStat), smsDict['reference'], smsDict['number'], smsDict['time'], smsDict['discharge'], smsDict['status'])
                         else:
                             raise CommandError('Invalid PDU type for readStoredSms(): {0}'.format(smsDict['type']))
                         messages.append(sms)
@@ -1527,7 +1526,9 @@ class GsmModem(SerialComms):
         else:
             # Single standard +CUSD response
             cusdMatches = [self.CUSD_REGEX.match(lines[0])]
-        message = None
+            self.log.info(f'lines: {lines} --- cusdMatches: {cusdMatches}')
+
+        message = ""
         sessionActive = True
         if len(cusdMatches) > 1:
             self.log.debug('Multiple +CUSD responses received; filtering...')
@@ -1543,8 +1544,13 @@ class GsmModem(SerialComms):
                     if sessionActive and cusdMatch.group(1) != '1':
                         sessionActive = False
         else:
-            sessionActive = cusdMatches[0].group(1) == '1'
-            message = cusdMatches[0].group(2)
+            cusdMatch = cusdMatches[0]
+            if cusdMatch:
+                sessionActive = cusdMatch.group(1) == '1'
+                message = cusdMatch.group(2) if cusdMatch.group(2) else None
+                if cusdMatch.group(1) == '2':
+                    # Set session as inactive if it's a network-terminated message without content
+                    sessionActive = False
         return Ussd(self, sessionActive, message)
 
     def _placeHolderCallback(self, *args):
