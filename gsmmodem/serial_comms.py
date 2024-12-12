@@ -22,7 +22,7 @@ class SerialComms(object):
     # Default timeout for serial port reads (in seconds)
     timeout = 1
 
-    def __init__(self, port, baudrate=115200, notifyCallbackFunc=None, fatalErrorCallbackFunc=None, *args, **kwargs):
+    def __init__(self, port, baudrate=115200, notifyCallbackFunc=None, fatalErrorCallbackFunc=None, notificationPort=None, notificationBaudrate=115200, *args, **kwargs):
         """ Constructor
 
         :param fatalErrorCallbackFunc: function to call if a fatal error occurs in the serial device reading thread
@@ -31,6 +31,10 @@ class SerialComms(object):
         self.alive = False
         self.port = port
         self.baudrate = baudrate
+
+        self.notificationPort = notificationPort
+        self.notificationBaudrate = notificationBaudrate
+
 
         self._responseEvent = None # threading.Event()
         self._expectResponseTermSeq = None # expected response terminator sequence
@@ -55,15 +59,25 @@ class SerialComms(object):
         self.rxThread.daemon = True
         self.rxThread.start()
 
+        if self.notificationPort:
+            self.notificationSerial = serial.Serial(port=self.notificationPort, baudrate=self.notificationBaudrate, timeout=self.timeout, *self.com_args, **self.com_kwargs)
+            self.notificationThread = threading.Thread(target=self._readLoop, args=(True,))
+            self.notificationThread.daemon = True
+            self.notificationThread.start()
+
     def close(self):
         """ Stops the read thread, waits for it to exit cleanly, then closes the underlying serial port """
         self.alive = False
         self.rxThread.join()
         self.serial.close()
 
-    def _handleLineRead(self, line, checkForResponseTerm=True):
+        if self.notificationPort:
+            self.notificationThread.join()
+            self.notificationSerial.close()
+
+    def _handleLineRead(self, line, checkForResponseTerm=True, isNotificationSerial=False):
         #print 'sc.hlineread:',line
-        if self._responseEvent and not self._responseEvent.is_set():
+        if self._responseEvent and not self._responseEvent.is_set() and not isNotificationSerial:
             # A response event has been set up (another thread is waiting for this response)
             self._response.append(line)
             if not checkForResponseTerm or self.RESPONSE_TERM.match(line):
@@ -84,17 +98,22 @@ class SerialComms(object):
     def _placeholderCallback(self, *args, **kwargs):
         """ Placeholder callback function (does nothing) """
 
-    def _readLoop(self):
+    def _readLoop(self, isNotificationSerial=False):
         """ Read thread main loop
 
         Reads lines from the connected device
         """
+        if isNotificationSerial:
+            serial = self.notificationSerial
+        else:
+            serial = self.serial
+
         try:
             readTermSeq = bytearray(self.RX_EOL_SEQ)
             readTermLen = len(readTermSeq)
             rxBuffer = bytearray()
             while self.alive:
-                data = self.serial.read(1)
+                data = serial.read(1)
                 if len(data) != 0: # check for timeout
                     #print >> sys.stderr, ' RX:', data,'({0})'.format(ord(data))
                     rxBuffer.append(ord(data))
@@ -104,18 +123,18 @@ class SerialComms(object):
                         rxBuffer = bytearray()
                         if len(line) > 0:
                             #print 'calling handler'
-                            self._handleLineRead(line)
+                            self._handleLineRead(line,isNotificationSerial=isNotificationSerial)
                     elif self._expectResponseTermSeq:
                         if rxBuffer[-len(self._expectResponseTermSeq):] == self._expectResponseTermSeq:
                             line = rxBuffer.decode()
                             rxBuffer = bytearray()
-                            self._handleLineRead(line, checkForResponseTerm=False)
+                            self._handleLineRead(line, checkForResponseTerm=False,isNotificationSerial=isNotificationSerial)
             #else:
                 #' <RX timeout>'
         except serial.SerialException as e:
             self.alive = False
             try:
-                self.serial.close()
+                serial.close()
             except Exception: #pragma: no cover
                 pass
             # Notify the fatal error handler
