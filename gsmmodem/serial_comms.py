@@ -60,7 +60,8 @@ class SerialComms(object):
         self.rxThread.start()
 
         if self.notificationPort:
-            self.notificationSerial = serial.Serial(port=self.notificationPort, baudrate=self.notificationBaudrate, timeout=self.timeout, *self.com_args, **self.com_kwargs)
+            self.notificationSerial = serial.Serial(dsrdtr=True, rtscts=True, port=self.notificationPort, baudrate=self.notificationBaudrate,
+                                    timeout=self.timeout,*self.com_args,**self.com_kwargs)
             self.notificationThread = threading.Thread(target=self._readLoop, args=(True,))
             self.notificationThread.daemon = True
             self.notificationThread.start()
@@ -104,16 +105,16 @@ class SerialComms(object):
         Reads lines from the connected device
         """
         if isNotificationSerial:
-            serial = self.notificationSerial
+            currentSerial = self.notificationSerial
         else:
-            serial = self.serial
+            currentSerial = self.serial
 
         try:
             readTermSeq = bytearray(self.RX_EOL_SEQ)
             readTermLen = len(readTermSeq)
             rxBuffer = bytearray()
             while self.alive:
-                data = serial.read(1)
+                data = currentSerial.read(1)
                 if len(data) != 0: # check for timeout
                     #print >> sys.stderr, ' RX:', data,'({0})'.format(ord(data))
                     rxBuffer.append(ord(data))
@@ -134,7 +135,7 @@ class SerialComms(object):
         except serial.SerialException as e:
             self.alive = False
             try:
-                serial.close()
+                currentSerial.close()
             except Exception: #pragma: no cover
                 pass
             # Notify the fatal error handler
